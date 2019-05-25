@@ -59,7 +59,12 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
             data, address = sock.recvfrom(1024)
             if data:
                 seq,chksum = struct.unpack(str(seqsize)+'s32s', data)
-                print("ACK de seq: "+seq.decode('utf-8')+" con checksum: "+chksum.decode('utf-8'))
+                seq = seq.decode('utf-8')
+                chksum = chksum.decode('utf-8')
+                if calculate_checksum(seq) == chksum:
+                    print("Checksum correcto de seq: "+seq)
+                else:
+                    print("Checksum con errores")
 
     # Thread de recepción de acks.
     ack_thread = threading.Thread(target=receive_ack)
