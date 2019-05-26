@@ -72,7 +72,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
                 chksum = chksum.decode('utf-8')
                 if calculate_checksum(seq) == chksum:
                     print("Checksum correcto de seq: "+seq)
-                    if not retransmit:
+                    if not retransmit: # TODO ignorar tiempos de paquetes con retransmit, quizas puede ser una tupla en sent_time con un boolean si es retransmit
                         ack_time = time.time()
                         if firstKarn:
                             firstKarn = False
