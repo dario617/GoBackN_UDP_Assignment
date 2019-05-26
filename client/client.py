@@ -6,6 +6,10 @@ import hashlib
 import time
 import struct
 
+timeout = 1
+retransmit = False
+firstKarn = True
+
 # Calcula el checksum de un mensaje en string
 def calculate_checksum(message):
     checksum = hashlib.md5(message.encode()).hexdigest()
@@ -24,11 +28,11 @@ def send_packet(ip, port, message):
 
 
 def main(ip, filename, window, packsize, seqsize, sendport, ackport):
-
+    global timeout
     # El archivo que queremos mandar.
     f = open(filename, "r")
     content = f.read()
-
+    sent_time = []
     # El texto dividido en chunks de packsize caracteres.
     parts = [content[i:i + packsize] for i in range(0, len(content), packsize)]
 
@@ -49,6 +53,10 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # Espera el paquete ack de parte del servidor. Esta versión no hace nada
     # distinto a publicar ese valor.
     def receive_ack():
+        global firstKarn
+        global EstimatedRTT
+        global DevRTT
+        nonlocal timeout
         running = True
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -63,6 +71,23 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
                 chksum = chksum.decode('utf-8')
                 if calculate_checksum(seq) == chksum:
                     print("Checksum correcto de seq: "+seq)
+                    if not retransmit:
+                        ack_time = time.time()
+                        if firstKarn:
+                            firstKarn = False
+                            EstimatedRTT = ack_time-sent_time[int(seq)]
+                            DevRTT = EstimatedRTT/2.0
+                            timeout = EstimatedRTT + max(1,4*DevRTT) # Segun RFC6298 Pag 2
+                            if timeout < 1: # Whenever RTO is computed, if it is less than 1 second, then the
+                                            # RTO SHOULD be rounded up to 1 second.
+                                timeout = 1
+                        else:
+                            SampleRTT = ack_time-sent_time[int(seq)]
+                            EstimatedRTT = (1-0.125)*EstimatedRTT+0.125*SampleRTT
+                            DevRTT = (1-0.25)*DevRTT+0.25*abs(SampleRTT-EstimatedRTT)
+                            timeout = EstimatedRTT + 4*DevRTT
+                            if timeout < 1:
+                                timeout = 1
                 else:
                     print("Checksum con errores")
 
@@ -73,6 +98,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # Enviamos cada paquete. ¿Llegan siempre? No
     while seq_num < len(parts):
         message = create_message(parts[seq_num], seq_num)
+        sent_time.append(time.time())
         send_packet(ip, sendport, message)
         time.sleep(0.1)
         seq_num += 1
