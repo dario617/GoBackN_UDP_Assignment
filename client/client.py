@@ -13,7 +13,6 @@ firstKarn = True
 # Calcula el checksum de un mensaje en string
 def calculate_checksum(message):
     checksum = hashlib.md5(message.encode()).hexdigest()
-    print("hash is " + checksum)
     return checksum
 
 # Envía el paquete con datos al servidor
@@ -54,9 +53,11 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # distinto a publicar ese valor.
     def receive_ack():
         global firstKarn
-        global EstimatedRTT
-        global DevRTT
-        nonlocal timeout
+        global timeout
+        global retransmit
+        EstimatedRTT = None
+        DevRTT = None
+
         running = True
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -78,6 +79,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
                             EstimatedRTT = ack_time-sent_time[int(seq)]
                             DevRTT = EstimatedRTT/2.0
                             timeout = EstimatedRTT + max(1,4*DevRTT) # Segun RFC6298 Pag 2
+                            print('Calculated timeout: '+str(timeout))
                             if timeout < 1: # Whenever RTO is computed, if it is less than 1 second, then the
                                             # RTO SHOULD be rounded up to 1 second.
                                 timeout = 1
@@ -86,6 +88,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
                             EstimatedRTT = (1-0.125)*EstimatedRTT+0.125*SampleRTT
                             DevRTT = (1-0.25)*DevRTT+0.25*abs(SampleRTT-EstimatedRTT)
                             timeout = EstimatedRTT + 4*DevRTT
+                            print('Calculated timeout: ' + str(timeout))
                             if timeout < 1:
                                 timeout = 1
                 else:
