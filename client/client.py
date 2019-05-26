@@ -6,6 +6,8 @@ import hashlib
 import time
 import struct
 
+current_milli_time = lambda: int(round(time.time() * 1000))
+
 # Calcula el checksum de un mensaje en string
 def calculate_checksum(message):
     checksum = hashlib.md5(message.encode()).hexdigest()
@@ -31,6 +33,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
 
     # El texto dividido en chunks de packsize caracteres.
     parts = [content[i:i + packsize] for i in range(0, len(content), packsize)]
+    total_parts = len(parts)
 
     # Número de secuencia inicial. Debe ser cero. Ojo con el ACK que se manda si es
     # que el servidor está esperando el primer paquete. ¿Qué valor debiese tener? Maxseq
@@ -46,13 +49,11 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
 
     # Crear lista para manejar los Ack recibidos
     # y listas para manejo de errores
-    acks = [False for el in parts]
     ackCount = [0 for el in parts]
     flags = [0]
-    lastAck = 0
 
     # Timeout para la ventana calculado con el algoritmo de Karn
-    timeout = 0.9
+    timeout = 900 # millis
 
     # Funcion anidada para leer el input.
     # Espera el paquete ack de parte del servidor. Esta versión no hace nada
@@ -67,58 +68,51 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
         while running:
             data, address = sock.recvfrom(1024)
             if data:
-                seq,chksum = struct.unpack(str(seqsize)+'s32s', data)
-                seq = seq.decode('utf-8')
-                chksum = chksum.decode('utf-8')
-                if calculate_checksum(seq) == chksum:
-                    print("Checksum correcto de seq: "+seq)
-                    acks[int(seq)] = True
-                    ackCount[int(seq)] = ackCount[int(seq)] + 1
-                else:
-                    print("Checksum con errores")
-                # Si se recibe el elemento de la ventana muchas veces entonces 
-                # el checksum estaba corrupto pero el servidor obtuvo la info
-                # entonces podemos mover el seqnum
-                if ackCount[int(seq)] > 3 :
-                    print("Moviendo el numero de ACK a {}".format(int(seq)))
-                    flags[0] = int(seq)
+                try:
+                    seq,chksum = struct.unpack(str(seqsize)+'s32s', data)
+                    seq = seq.decode('utf-8')
+                    chksum = chksum.decode('utf-8')
+                    if calculate_checksum(seq) == chksum and int(seq) < total_parts:
+                        print("Checksum correcto de seq: "+seq)
+                        ackCount[int(seq)] = ackCount[int(seq)] + 1
+                        if flags[0] < int(seq):
+                            print("Thread said that I could change the flag to ", seq)
+                            flags[0] = int(seq)
+                    else:
+                        print("Checksum con errores")
+                except Exception as e:
+                    print("Exception en unpack",e)
 
     # Thread de recepción de acks.
     ack_thread = threading.Thread(target=receive_ack)
     ack_thread.start()
 
     # Enviamos cada paquete. ¿Llegan siempre? No
-    while seq_num < len(parts):
+    while seq_num < total_parts - 1:
 
         window_bottom = seq_num
-        if seq_num + window < len(parts):
+        if seq_num + window < total_parts:
             window_top = seq_num + window
         else:
-            window_top = len(parts)
+            window_top = total_parts
 
         # Enviar los paquetes en la ventana
-        print("Ventana actual",window_bottom, window_top)
+        print("Ventana actual", window_bottom, window_top)
+        timeToQuit = current_milli_time() + timeout
         while window_bottom < window_top:
             message = create_message(parts[window_bottom], window_bottom)
             send_packet(ip, sendport, message)
             window_bottom += 1
 
-        # Esperar el timeout
-        time.sleep(timeout)
+        # Esperar el timeout con busy waiting
+        while timeToQuit > current_milli_time() and seq_num != flags[0]:
+            continue
 
-        # Tomar ultimo valor True
-        while lastAck < len(parts) and acks[lastAck]:
-            lastAck += 1
-
-        # Compararlo con el valor de ack mas grande
-        if lastAck < flags[0]:
-            lastAck = flags[0]
-        
-        seq_num = lastAck
+        time.sleep(2)
+        print(flags)
+        seq_num = flags[0]
 
     # Estadisticas finales de ejecucion
-    print("Acks recibidos sin problemas")
-    print(acks)
     print("Conteo de acks")
     print(ackCount)
     send_packet(ip, sendport, '') # Paquete vacio para terminar la conexion
