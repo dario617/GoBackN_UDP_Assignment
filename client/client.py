@@ -6,7 +6,9 @@ import hashlib
 import time
 import struct
 
-current_milli_time = lambda: int(round(time.time() * 1000))
+timeout = 1
+retransmit = False
+firstKarn = True
 
 # Calcula el checksum de un mensaje en string
 def calculate_checksum(message):
@@ -25,11 +27,11 @@ def send_packet(ip, port, message):
 
 
 def main(ip, filename, window, packsize, seqsize, sendport, ackport):
-
+    global timeout
     # El archivo que queremos mandar.
     f = open(filename, "r")
     content = f.read()
-
+    sent_time = []
     # El texto dividido en chunks de packsize caracteres.
     parts = [content[i:i + packsize] for i in range(0, len(content), packsize)]
     total_parts = len(parts)
@@ -58,6 +60,12 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # Espera el paquete ack de parte del servidor. Esta versión no hace nada
     # distinto a publicar ese valor.
     def receive_ack():
+        global firstKarn
+        global timeout
+        global retransmit
+        EstimatedRTT = None
+        DevRTT = None
+
         running = True
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -73,6 +81,26 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
                     chksum = chksum.decode('utf-8')
                     # Si el checksum es correcto y el numero de secuencia esta en los limites
                     if calculate_checksum(seq) == chksum and int(seq) < total_parts:
+                        # Ignorar tiempos de paquetes con retransmit, quizas puede ser una tupla en sent_time con un boolean si es retransmit
+                    	if ackCount[int(seq)] == 0: 
+                            ack_time = time.time()
+                            if firstKarn:
+                                firstKarn = False
+                                EstimatedRTT = ack_time-sent_time[int(seq)]
+                                DevRTT = EstimatedRTT/2.0
+                                timeout = EstimatedRTT + max(1,4*DevRTT) # Segun RFC6298 Pag 2
+                                print('Calculated timeout: '+str(timeout))
+                                if timeout < 1: # Whenever RTO is computed, if it is less than 1 second, then the
+                                                # RTO SHOULD be rounded up to 1 second.
+                                    timeout = 1
+                            else:
+                                SampleRTT = ack_time-sent_time[int(seq)]
+                                EstimatedRTT = (1-0.125)*EstimatedRTT+0.125*SampleRTT
+                                DevRTT = (1-0.25)*DevRTT+0.25*abs(SampleRTT-EstimatedRTT)
+                                timeout = EstimatedRTT + 4*DevRTT
+                                print('Calculated timeout: ' + str(timeout))
+                                if timeout < 1:
+                                    timeout = 1
                         print("Checksum correcto de seq: "+seq)
                         ackCount[int(seq)] = ackCount[int(seq)] + 1
                         # Si el numero de secuencia es mayor que el ultimo recibido actualizar
@@ -92,23 +120,24 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # Enviamos cada paquete. ¿Llegan siempre? No
     window_bottom = seq_num
     window_top = seq_num + window
-    timeToQuit = current_milli_time() + timeout
+    timeToQuit = time.time() + timeout
     while lastReceived[0] < total_parts-1:
 
         # Si es el primero de la ventana poner el timeout
         if seq_num == window_bottom:
             print("Seteando timer")
-            timeToQuit = current_milli_time() + timeout
+            timeToQuit = time.time() + timeout
 
         # Enviar dentro de la ventana
         if seq_num < window_top:
             message = create_message(parts[seq_num], seq_num)
             send_packet(ip, sendport, message)
+            sent_time[seq_num] = time.time()
             seq_num += 1
             print("Enviando secuencia "+str(seq_num))
 
         # Si el timeout se acabo reiniciar ventana
-        if timeToQuit < current_milli_time():
+        if timeToQuit < time.time():
             print("Timer expirado")
             seq_num = window_bottom
 
@@ -116,7 +145,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
         if window_bottom < lastReceived[0]:
             print("Moviendo ventana")
             window_bottom = lastReceived[0]+1
-            timeToQuit = current_milli_time() + timeout
+            timeToQuit = time.time() + timeout
             if window_top + window < total_parts: 
                 window_top = window_bottom + window
             else:
