@@ -31,11 +31,11 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # El archivo que queremos mandar.
     f = open(filename, "r")
     content = f.read()
-    sent_time = []
+
     # El texto dividido en chunks de packsize caracteres.
     parts = [content[i:i + packsize] for i in range(0, len(content), packsize)]
     total_parts = len(parts)
-
+    sent_time = [None] * total_parts
     # Número de secuencia inicial. Debe ser cero. Ojo con el ACK que se manda si es
     # que el servidor está esperando el primer paquete. ¿Qué valor debiese tener? Maxseq
     # Hint: revisen lo que les tira el servidor si el paquete 0 no llega.
@@ -54,7 +54,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     lastReceived = [-1]
 
     # Timeout para la ventana calculado con el algoritmo de Karn
-    timeout = 10000 # millis
+    timeout = 1 # millis
 
     # Funcion anidada para leer el input.
     # Espera el paquete ack de parte del servidor. Esta versión no hace nada
@@ -82,7 +82,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
                     # Si el checksum es correcto y el numero de secuencia esta en los limites
                     if calculate_checksum(seq) == chksum and int(seq) < total_parts:
                         # Ignorar tiempos de paquetes con retransmit, quizas puede ser una tupla en sent_time con un boolean si es retransmit
-                    	if ackCount[int(seq)] == 0: 
+                        if ackCount[int(seq)] == 0:
                             ack_time = time.time()
                             if firstKarn:
                                 firstKarn = False
