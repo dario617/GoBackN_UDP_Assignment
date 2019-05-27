@@ -104,8 +104,8 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
         if seq_num < window_top:
             message = create_message(parts[seq_num], seq_num)
             send_packet(ip, sendport, message)
+            print("Enviando secuencia " + str(seq_num))
             seq_num += 1
-            print("Enviando secuencia "+str(seq_num))
 
         # Si el timeout se acabo reiniciar ventana
         if timeToQuit < current_milli_time():
