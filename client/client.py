@@ -11,7 +11,6 @@ current_milli_time = lambda: int(round(time.time() * 1000))
 # Calcula el checksum de un mensaje en string
 def calculate_checksum(message):
     checksum = hashlib.md5(message.encode()).hexdigest()
-    print("hash is " + checksum)
     return checksum
 
 # Envía el paquete con datos al servidor
@@ -53,7 +52,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     lastReceived = [-1]
 
     # Timeout para la ventana calculado con el algoritmo de Karn
-    timeout = 30000 # millis
+    timeout = 10000 # millis
 
     # Funcion anidada para leer el input.
     # Espera el paquete ack de parte del servidor. Esta versión no hace nada
@@ -93,26 +92,31 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # Enviamos cada paquete. ¿Llegan siempre? No
     window_bottom = seq_num
     window_top = seq_num + window
-
-    while seq_num < total_parts:
-
-        # Enviar dentro de la ventana
-        if seq_num < window_top:
-            message = create_message(parts[window_bottom], window_bottom)
-            send_packet(ip, sendport, message)
-            seq_num += 1
+    timeToQuit = current_milli_time() + timeout
+    while lastReceived[0] < total_parts-1:
 
         # Si es el primero de la ventana poner el timeout
         if seq_num == window_bottom:
+            print("Seteando timer")
             timeToQuit = current_milli_time() + timeout
+
+        # Enviar dentro de la ventana
+        if seq_num < window_top:
+            message = create_message(parts[seq_num], seq_num)
+            send_packet(ip, sendport, message)
+            seq_num += 1
+            print("Enviando secuencia "+str(seq_num))
 
         # Si el timeout se acabo reiniciar ventana
         if timeToQuit < current_milli_time():
+            print("Timer expirado")
             seq_num = window_bottom
 
         # Actualizar variables de la ventana
-        if window_bottom != lastReceived[0]:
-            window_bottom = lastReceived[0]
+        if window_bottom < lastReceived[0]:
+            print("Moviendo ventana")
+            window_bottom = lastReceived[0]+1
+            timeToQuit = current_milli_time() + timeout
             if window_top + window < total_parts: 
                 window_top = window_bottom + window
             else:
