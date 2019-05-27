@@ -50,10 +50,10 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # Crear lista para manejar los Ack recibidos
     # y listas para manejo de errores
     ackCount = [0 for el in parts]
-    flags = [0]
+    lastReceived = [-1]
 
     # Timeout para la ventana calculado con el algoritmo de Karn
-    timeout = 900 # millis
+    timeout = 30000 # millis
 
     # Funcion anidada para leer el input.
     # Espera el paquete ack de parte del servidor. Esta versión no hace nada
@@ -72,14 +72,17 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
                     seq,chksum = struct.unpack(str(seqsize)+'s32s', data)
                     seq = seq.decode('utf-8')
                     chksum = chksum.decode('utf-8')
+                    # Si el checksum es correcto y el numero de secuencia esta en los limites
                     if calculate_checksum(seq) == chksum and int(seq) < total_parts:
                         print("Checksum correcto de seq: "+seq)
                         ackCount[int(seq)] = ackCount[int(seq)] + 1
-                        if flags[0] < int(seq):
-                            print("Thread said that I could change the flag to ", seq)
-                            flags[0] = int(seq)
+                        # Si el numero de secuencia es mayor que el ultimo recibido actualizar
+                        if lastReceived[0] < int(seq):
+                            lastReceived[0] = int(seq)
+                            print(lastReceived[0])
                     else:
                         print("Checksum con errores")
+                        ackCount[int(seq)] = ackCount[int(seq)] + 1
                 except Exception as e:
                     print("Exception en unpack",e)
 
@@ -88,7 +91,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     ack_thread.start()
 
     # Enviamos cada paquete. ¿Llegan siempre? No
-    while seq_num < total_parts - 1:
+    while seq_num < total_parts:
 
         window_bottom = seq_num
         if seq_num + window < total_parts:
@@ -97,20 +100,23 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
             window_top = total_parts
 
         # Enviar los paquetes en la ventana
-        print("Ventana actual", window_bottom, window_top)
+        print("Ventana actual: ", window_bottom, window_top)
         timeToQuit = current_milli_time() + timeout
         while window_bottom < window_top:
             message = create_message(parts[window_bottom], window_bottom)
             send_packet(ip, sendport, message)
             window_bottom += 1
 
-        # Esperar el timeout con busy waiting
-        while timeToQuit > current_milli_time() and seq_num != flags[0]:
-            continue
+        # Esperar el timeout con busy waiting:
+        # Mientras el timeout este vigente y no se hayan recibido todos los ack
+        # de la ventana
+        currentTime = current_milli_time()
+        while timeToQuit > currentTime and window_bottom == lastReceived[0]:
+            currentTime = current_milli_time()
 
-        time.sleep(2)
-        print(flags)
-        seq_num = flags[0]
+        # El siguiente numero de secuencia a enviar es el siguiente al ultimo
+        # recibido
+        seq_num = lastReceived[0] + 1
 
     # Estadisticas finales de ejecucion
     print("Conteo de acks")
