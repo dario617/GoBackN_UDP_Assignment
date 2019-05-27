@@ -91,32 +91,32 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     ack_thread.start()
 
     # Enviamos cada paquete. ¿Llegan siempre? No
+    window_bottom = seq_num
+    window_top = seq_num + window
+
     while seq_num < total_parts:
 
-        window_bottom = seq_num
-        if seq_num + window < total_parts:
-            window_top = seq_num + window
-        else:
-            window_top = total_parts
-
-        # Enviar los paquetes en la ventana
-        print("Ventana actual: ", window_bottom, window_top)
-        timeToQuit = current_milli_time() + timeout
-        while window_bottom < window_top:
+        # Enviar dentro de la ventana
+        if seq_num < window_top:
             message = create_message(parts[window_bottom], window_bottom)
             send_packet(ip, sendport, message)
-            window_bottom += 1
+            seq_num += 1
 
-        # Esperar el timeout con busy waiting:
-        # Mientras el timeout este vigente y no se hayan recibido todos los ack
-        # de la ventana
-        currentTime = current_milli_time()
-        while timeToQuit > currentTime and window_bottom == lastReceived[0]:
-            currentTime = current_milli_time()
+        # Si es el primero de la ventana poner el timeout
+        if seq_num == window_bottom:
+            timeToQuit = current_milli_time() + timeout
 
-        # El siguiente numero de secuencia a enviar es el siguiente al ultimo
-        # recibido
-        seq_num = lastReceived[0] + 1
+        # Si el timeout se acabo reiniciar ventana
+        if timeToQuit < current_milli_time():
+            seq_num = window_bottom
+
+        # Actualizar variables de la ventana
+        if window_bottom != lastReceived[0]:
+            window_bottom = lastReceived[0]
+            if window_top + window < total_parts: 
+                window_top = window_bottom + window
+            else:
+                window_top = total_parts
 
     # Estadisticas finales de ejecucion
     print("Conteo de acks")
