@@ -7,6 +7,11 @@ import time
 import struct
 
 current_milli_time = lambda: int(round(time.time() * 1000))
+timeout_expired = False
+
+def changeVariable():
+    global timeout_expired
+    timeout_expired = True
 
 # Calcula el checksum de un mensaje en string
 def calculate_checksum(message):
@@ -26,7 +31,7 @@ def send_packet(ip, port, message):
 
 
 def main(ip, filename, window, packsize, seqsize, sendport, ackport):
-
+    global timeout_expired
     # El archivo que queremos mandar.
     f = open(filename, "r")
     content = f.read()
@@ -93,26 +98,26 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # Enviamos cada paquete. ¿Llegan siempre? No
     while seq_num < total_parts:
 
+        message = create_message(parts[seq_num], seq_num)
+        send_packet(ip, sendport, message)
+
         window_bottom = seq_num
         if seq_num + window < total_parts:
             window_top = seq_num + window
         else:
             window_top = total_parts
-
         # Enviar los paquetes en la ventana
         print("Ventana actual: ", window_bottom, window_top)
-        timeToQuit = current_milli_time() + timeout
-        while window_bottom < window_top:
-            message = create_message(parts[window_bottom], window_bottom)
-            send_packet(ip, sendport, message)
-            window_bottom += 1
-
-        # Esperar el timeout con busy waiting:
-        # Mientras el timeout este vigente y no se hayan recibido todos los ack
-        # de la ventana
-        currentTime = current_milli_time()
-        while timeToQuit > currentTime and window_bottom == lastReceived[0]:
-            currentTime = current_milli_time()
+        t = threading.Timer(timeout, changeVariable)
+        t.start()
+        if lastReceived[0] == window_bottom:
+            t.cancel()
+        if timeout_expired:
+            while window_bottom < window_top:
+                message = create_message(parts[window_bottom], window_bottom)
+                send_packet(ip, sendport, message)
+                window_bottom += 1
+            timeout_expired = False
 
         # El siguiente numero de secuencia a enviar es el siguiente al ultimo
         # recibido
