@@ -35,7 +35,7 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     # El texto dividido en chunks de packsize caracteres.
     parts = [content[i:i + packsize] for i in range(0, len(content), packsize)]
     total_parts = len(parts)
-    sent_time = [None] * total_parts
+    sent_time = [0.0] * total_parts
     # Número de secuencia inicial. Debe ser cero. Ojo con el ACK que se manda si es
     # que el servidor está esperando el primer paquete. ¿Qué valor debiese tener? Maxseq
     # Hint: revisen lo que les tira el servidor si el paquete 0 no llega.
@@ -122,7 +122,6 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     window_top = seq_num + window
     timeToQuit = time.time() + timeout
     while lastReceived[0] < total_parts-1:
-
         # Si es el primero de la ventana poner el timeout
         if seq_num == window_bottom:
             print("Seteando timer")
@@ -132,10 +131,11 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
         if seq_num < window_top:
             message = create_message(parts[seq_num], seq_num)
             send_packet(ip, sendport, message)
-            sent_time[seq_num] = time.time()
-            seq_num += 1
+            if sent_time[seq_num] == 0.0:
+                sent_time[seq_num] = time.time()
             print("Enviando secuencia "+str(seq_num))
-
+            seq_num += 1
+            
         # Si el timeout se acabo reiniciar ventana
         if timeToQuit < time.time():
             print("Timer expirado")
@@ -145,7 +145,6 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
         if window_bottom < lastReceived[0]:
             print("Moviendo ventana")
             window_bottom = lastReceived[0]+1
-            timeToQuit = time.time() + timeout
             if window_top + window < total_parts: 
                 window_top = window_bottom + window
             else:
