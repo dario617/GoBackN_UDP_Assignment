@@ -13,7 +13,7 @@ First, start the server running
 $ ./server 2 8989 9090 127.0.0.1
 ```
 
-To start the client run (depending on your plaform)
+To start the client, run (depending on your plaform)
 ```shell
 $ python3 client.py
 ```
