@@ -7,8 +7,8 @@ import time
 import struct
 
 timeout = 1
-retransmit = False
 firstKarn = True
+DEBUG = False
 
 # Calcula el checksum de un mensaje en string
 def calculate_checksum(message):
@@ -32,6 +32,10 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     f = open(filename, "r")
     content = f.read()
 
+    # FAILSAFE de tamaño del paquete
+    if packsize > 1024:
+        packsize = 1024
+
     # El texto dividido en chunks de packsize caracteres.
     parts = [content[i:i + packsize] for i in range(0, len(content), packsize)]
     total_parts = len(parts)
@@ -53,6 +57,10 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     ackCount = [0 for el in parts]
     lastReceived = [-1]
 
+    # Manejo de overflow de ventanas
+    loops = [0] # LoopCount, 
+    maxNum = int(10**seqsize)
+
     # Timeout para la ventana calculado con el algoritmo de Karn
     timeout = 1 # millis
 
@@ -62,7 +70,6 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     def receive_ack():
         global firstKarn
         global timeout
-        global retransmit
         EstimatedRTT = None
         DevRTT = None
 
@@ -79,39 +86,58 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
                     seq,chksum = struct.unpack(str(seqsize)+'s32s', data)
                     seq = seq.decode('utf-8')
                     chksum = chksum.decode('utf-8')
+
                     # Si el checksum es correcto y el numero de secuencia esta en los limites
                     if calculate_checksum(seq) == chksum and int(seq) < total_parts:
+
+                        # Manejar loops de numeros de secuencia; en caso de inversion de orden
+                        seq = int(seq)
+                        index_seq = seq
+                        if lastReceived[0] > seq:
+                            loops[0] = loops[0] + 1
+                            lastReceived[0] = seq
+                            index_seq = index_seq + maxNum*loops[0]
+                            if DEBUG:
+                                print("Loop con indices seq:{} index_seq:{} loops:{}".format(seq,index_seq,loops[0]))
+                        else:
+                            index_seq = index_seq + maxNum*loops[0]
+
                         # Ignorar tiempos de paquetes con retransmit, quizas puede ser una tupla en sent_time con un boolean si es retransmit
-                        if ackCount[int(seq)] == 0:
+                        if ackCount[index_seq] == 0: 
                             ack_time = time.time()
                             if firstKarn:
                                 firstKarn = False
-                                EstimatedRTT = ack_time-sent_time[int(seq)]
+                                EstimatedRTT = ack_time-sent_time[index_seq]
                                 DevRTT = EstimatedRTT/2.0
                                 timeout = EstimatedRTT + max(1,4*DevRTT) # Segun RFC6298 Pag 2
-                                print('Calculated timeout: '+str(timeout))
+                                if DEBUG:
+                                    print('Calculated timeout: '+str(timeout))
                                 if timeout < 1: # Whenever RTO is computed, if it is less than 1 second, then the
                                                 # RTO SHOULD be rounded up to 1 second.
                                     timeout = 1
                             else:
-                                SampleRTT = ack_time-sent_time[int(seq)]
+                                SampleRTT = ack_time-sent_time[index_seq]
                                 EstimatedRTT = (1-0.125)*EstimatedRTT+0.125*SampleRTT
                                 DevRTT = (1-0.25)*DevRTT+0.25*abs(SampleRTT-EstimatedRTT)
                                 timeout = EstimatedRTT + 4*DevRTT
-                                print('Calculated timeout: ' + str(timeout))
+                                if DEBUG:
+                                    print('Calculated timeout: ' + str(timeout))
                                 if timeout < 1:
                                     timeout = 1
-                        print("Checksum correcto de seq: "+seq)
-                        ackCount[int(seq)] = ackCount[int(seq)] + 1
+                        print("Checksum correcto de seq: {} con index_seq: {}".format(seq,index_seq))
+                        ackCount[index_seq] = ackCount[index_seq] + 1
+
                         # Si el numero de secuencia es mayor que el ultimo recibido actualizar
-                        if lastReceived[0] < int(seq):
-                            lastReceived[0] = int(seq)
-                            print(lastReceived[0])
+                        if lastReceived[0] < seq:
+                            lastReceived[0] = seq
                     else:
-                        print("Checksum con errores")
-                        ackCount[int(seq)] = ackCount[int(seq)] + 1
+                        if DEBUG:
+                            print("Checksum con errores")
+                        index_seq = index_seq + maxNum*loops[0]
+                        ackCount[index_seq] = ackCount[index_seq] + 1
                 except Exception as e:
-                    print("Exception en unpack",e)
+                    if DEBUG:
+                        print("Exception en unpack",e)
 
     # Thread de recepción de acks.
     ack_thread = threading.Thread(target=receive_ack)
@@ -121,38 +147,47 @@ def main(ip, filename, window, packsize, seqsize, sendport, ackport):
     window_bottom = seq_num
     window_top = seq_num + window
     timeToQuit = time.time() + timeout
-    while lastReceived[0] < total_parts-1:
+    while (lastReceived[0] + loops[0]*maxNum) < total_parts-1:
+
         # Si es el primero de la ventana poner el timeout
         if seq_num == window_bottom:
-            print("Seteando timer")
+            if DEBUG:
+                print("Seteando timer")
             timeToQuit = time.time() + timeout
 
         # Enviar dentro de la ventana
         if seq_num < window_top:
-            message = create_message(parts[seq_num], seq_num)
+            message = create_message(parts[seq_num], seq_num%maxNum)
             send_packet(ip, sendport, message)
-            if sent_time[seq_num] == 0.0:
-                sent_time[seq_num] = time.time()
-            print("Enviando secuencia "+str(seq_num))
+            sent_time[seq_num] = time.time()
+            """
+            # Si nos pasamos del maxNum entonces nos dimos una vuelta
+            # y debemos actualizar los indices
+            if (seq_num%maxNum + 1) == maxNum:
+                loops[0] = loops[0] + 1 
+            """
+            print("Enviando secuencia {} con numero {}".format(seq_num,seq_num%maxNum))
             seq_num += 1
-            
+
         # Si el timeout se acabo reiniciar ventana
         if timeToQuit < time.time():
-            print("Timer expirado")
+            print("Timer expirado, last received {}".format(lastReceived[0] + loops[0]*maxNum))
             seq_num = window_bottom
 
         # Actualizar variables de la ventana
-        if window_bottom < lastReceived[0]:
-            print("Moviendo ventana")
-            window_bottom = lastReceived[0]+1
+        if window_bottom < (lastReceived[0] + loops[0]*maxNum):
+            if DEBUG:
+                print("Moviendo ventana")
+            window_bottom = lastReceived[0] + loops[0]*maxNum + 1
+            timeToQuit = time.time() + timeout
             if window_top + window < total_parts: 
                 window_top = window_bottom + window
             else:
                 window_top = total_parts
 
     # Estadisticas finales de ejecucion
-    print("Conteo de acks")
-    print(ackCount)
+    print("Conteo de acks (hasta paquete 1000)")
+    print(ackCount[:1000])
     send_packet(ip, sendport, '') # Paquete vacio para terminar la conexion
 
 
